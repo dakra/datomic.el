@@ -44,6 +44,14 @@
   :prefix "datomic-"
   :group 'tools)
 
+(defcustom datomic-ion-auto-deploy t
+  "Whether or not to automatically deploy after a Ion push."
+  :type 'boolean)
+
+(defcustom datomic-ion-auto-check-status t
+  "Whether or not to automatically poll the status after a Ion deploy."
+  :type 'boolean)
+
 (defcustom datomic-access-program "datomic-access"
   "Path to the datomic-access bash script."
   :type 'file)
@@ -102,22 +110,27 @@
                               (process-buffer proc))
                           (goto-char (point-min))
                           (kill-line 3)
-                          (let ((edn (car (parseedn-read))))
-                            (setq datomic-ion-deploy-group
-                                  (car (gethash ':deploy-groups edn)))
-                            (setq datomic-ion-last-rev (gethash ':rev edn)))
-                          (message "deploy command %s"
-                                   (format "'{:op :deploy, :group %s, :rev \"%s\"}'"
-                                           datomic-ion-deploy-group datomic-ion-last-rev))))))
+                          (let* ((edn (car (parseedn-read)))
+                                 (group (car (gethash ':deploy-groups edn)))
+                                 (rev (gethash ':rev edn)))
+                            (setq datomic-ion-deploy-group group)
+                            (setq datomic-ion-last-rev rev)
+                            (when (or datomic-ion-auto-deploy
+                                      (yes-or-no-p
+                                       (format "Deploy %s revision '%s' to group %s? "
+                                               (projectile-project-name) rev group)))
+                              (datomic-ion-deploy group rev)))))))
     (apply #'async-start-process name program finish-func args)))
 
 
-(defun datomic-ion-deploy ()
-  "Deploy the last pushed Datomic Ion of the current project."
+(defun datomic-ion-deploy (&optional group rev)
+  "Deploy the last pushed Datomic Ion of the current project.
+Optional use system GROUP and revision REV for deployment."
   (interactive)
-  (when (yes-or-no-p
-         (format "Deploy %s revision '%s' to group %s? "
-                 (projectile-project-name) datomic-ion-last-rev datomic-ion-deploy-group))
+  (when (or (and group rev)
+            (yes-or-no-p
+             (format "Deploy %s revision '%s' to group %s? "
+                     (projectile-project-name) datomic-ion-last-rev datomic-ion-deploy-group)))
     (let* ((default-directory (projectile-project-root))
            (name "ion deploy")
            (program "clojure")
@@ -129,19 +142,23 @@
                             (with-current-buffer
                                 (process-buffer proc))
                             (goto-char (point-min))
-                            (let ((edn (car (parseedn-read))))
-                              (setq datomic-ion-last-execution-arn (gethash ':execution-arn edn)))))))
+                            (let* ((edn (car (parseedn-read)))
+                                   (arn (gethash ':execution-arn edn)))
+                              (setq datomic-ion-last-execution-arn arn)
+                              (when datomic-ion-auto-check-status
+                                (datomic-ion-status arn)))))))
       (apply #'async-start-process name program finish-func args))))
 
-(defun datomic-ion-status ()
-  "Get the status of the last Datomic Ion deploy."
+(defun datomic-ion-status (&optional arn)
+  "Get the status of the last Datomic Ion deploy.
+Optinally specify execution ARN."
   (interactive)
   (let* ((default-directory (projectile-project-root))
          (name "ion deploy")
          (program "clojure")
          (args `("-A:dev" "-m" "datomic.ion.dev"
                  ,(format "{:op :deploy-status, :execution-arn %s}"
-                          datomic-ion-last-execution-arn)))
+                          (or arn datomic-ion-last-execution-arn))))
          (finish-func (lambda (proc)
                         (save-excursion
                           (with-current-buffer
@@ -151,7 +168,8 @@
                                  (status (gethash ':deploy-status edn))
                                  (code-status (gethash ':code-deploy-status edn)))
                             (if (and (or (string= status "RUNNING") (string= code-status "RUNNING"))
-                                     (yes-or-no-p "Deploy still running. Check status again? "))
+                                     (or datomic-ion-auto-check-status
+                                         (yes-or-no-p "Deploy still running. Check status again? ")))
                                 (datomic-ion-status)
                               (message "Deploy status: %s - Code Deploy status: %s"
                                        status code-status)))))))
