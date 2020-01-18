@@ -1,6 +1,6 @@
 ;;; datomic.el --- Utility functions for working with Datomic projects  -*- lexical-binding: t -*-
 
-;; Copyright (c) 2019 Daniel Kraus <daniel@kraus.my>
+;; Copyright (c) 2019-2020 Daniel Kraus <daniel@kraus.my>
 
 ;; Author: Daniel Kraus <daniel@kraus.my>
 ;; URL: https://github.com/dakra/datomic.el
@@ -66,7 +66,10 @@
 
 (defcustom datomic-systems nil
   "List of datomic system names."
-  :type 'list)
+  :type '(repeat string)
+  :safe (lambda (value)
+          (and (listp value)
+               (cl-every 'stringp value))))
 
 
 ;;; Variables
