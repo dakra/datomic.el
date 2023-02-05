@@ -1,12 +1,12 @@
 ;;; datomic.el --- Utility functions for working with Datomic projects  -*- lexical-binding: t -*-
 
-;; Copyright (c) 2019-2020 Daniel Kraus <daniel@kraus.my>
+;; Copyright (c) 2019-2023 Daniel Kraus <daniel@kraus.my>
 
 ;; Author: Daniel Kraus <daniel@kraus.my>
 ;; URL: https://github.com/dakra/datomic.el
 ;; Keywords: clojure, datomic, ions, convenience, tools, processes
 ;; Version: 0.1
-;; Package-Requires: ((emacs "25.2") (async "1.9") (parseedn "0.1") (projectile "2.0"))
+;; Package-Requires: ((emacs "28.1") (async "1.9.7") (parseedn "1.0.6") (project "0.9.5"))
 
 ;; This file is NOT part of GNU Emacs.
 
@@ -34,13 +34,13 @@
 (require 'async)
 (require 'compile)
 (require 'parseedn)
-(require 'projectile)
+(require 'project)
 
 
 ;;; Customization
 
 (defgroup datomic nil
-  "Datomic utilities"
+  "Datomic utilities."
   :prefix "datomic-"
   :group 'tools)
 
@@ -71,6 +71,13 @@
           (and (listp value)
                (cl-every 'stringp value))))
 
+(defcustom datomic-cli-command "clojure -Sdeps '{:deps {com.datomic/tools.ops {:mvn/version \"1.0.91\"}}}' -M -m datomic.tools.ops"
+  "Command for the datomic CLI Tools.
+Can be just \"datomic\" if you installed the datomic CLI tools or the one-line
+content of the datomic shell script.
+See https://docs.datomic.com/cloud/operation/cli-tools.html#client-acces"
+  :type 'string)
+
 
 ;;; Variables
 
@@ -81,9 +88,21 @@
 
 ;;; Functions
 
+(defun datomic--get-systems ()
+  "Return a list of Datomic systems."
+  (let* ((cmd (concat datomic-cli-command " cloud list-systems"))
+         (out (shell-command-to-string cmd))
+         (systems (json-parse-string out)))
+    (mapcar (lambda (x)
+              (gethash "name" x))
+            systems)))
+
 (defun datomic--read-system ()
   "Read Datomic system name from user."
-  (if (and (car datomic-systems) (not (cdr datomic-systems)))
+  (unless datomic-systems
+    (message "Variable `datomic-systems' not set. Fetching systems from cloud.")
+    (setq datomic-systems (datomic--get-systems)))
+  (if (length= datomic-systems 1)
       (car datomic-systems)
     (if (not (car datomic-systems))
         (read-string "System name: ")
@@ -103,10 +122,10 @@
 (defun datomic-ion-push ()
   "Push the current project Datomic Ion."
   (interactive)
-  (let* ((default-directory (projectile-project-root))
+  (let* ((default-directory (project-root (project-current)))
          (name "ion push")
          (program "clojure")
-         (args '("-A:dev" "-m" "datomic.ion.dev" "{:op :push}"))
+         (args '("-M:ion-dev" "{:op :push}"))
          (finish-func (lambda (proc)
                         (save-excursion
                           (with-current-buffer
@@ -114,14 +133,14 @@
                           (goto-char (point-min))
                           (kill-line 3)
                           (let* ((edn (car (parseedn-read)))
-                                 (group (car (gethash ':deploy-groups edn)))
-                                 (rev (gethash ':rev edn)))
+                                 (group (car (gethash :deploy-groups edn)))
+                                 (rev (gethash :rev edn)))
                             (setq datomic-ion-deploy-group group)
                             (setq datomic-ion-last-rev rev)
                             (when (or datomic-ion-auto-deploy
                                       (yes-or-no-p
                                        (format "Deploy %s revision '%s' to group %s? "
-                                               (projectile-project-name) rev group)))
+                                               (project-name (project-current)) rev group)))
                               (datomic-ion-deploy group rev)))))))
     (apply #'async-start-process name program finish-func args)))
 
@@ -133,11 +152,11 @@ Optional use system GROUP and revision REV for deployment."
   (when (or (and group rev)
             (yes-or-no-p
              (format "Deploy %s revision '%s' to group %s? "
-                     (projectile-project-name) datomic-ion-last-rev datomic-ion-deploy-group)))
-    (let* ((default-directory (projectile-project-root))
+                     (project-name (project-current)) datomic-ion-last-rev datomic-ion-deploy-group)))
+    (let* ((default-directory (project-root (project-current)))
            (name "ion deploy")
            (program "clojure")
-           (args `("-A:dev" "-m" "datomic.ion.dev"
+           (args `("-M:ion-dev"
                    ,(format "{:op :deploy, :group %s, :rev \"%s\"}"
                             datomic-ion-deploy-group datomic-ion-last-rev)))
            (finish-func (lambda (proc)
@@ -152,14 +171,30 @@ Optional use system GROUP and revision REV for deployment."
                                 (datomic-ion-status arn)))))))
       (apply #'async-start-process name program finish-func args))))
 
+
+(defun datomic-list-systems ()
+  "List Datomic cloud systems."
+  (interactive)
+  (let* ((cmd (concat datomic-cli-command " cloud list-systems"))
+         (out (shell-command-to-string cmd))
+         (x (json-parse-string out)))
+    (with-temp-buffer
+      (insert "Datomic cloud systems:\n\n")
+      (mapc (lambda (groups)
+              (maphash (lambda (k v)
+                         (insert (format "%25s: %s\n" k v)))
+                       groups))
+            x)
+      (message (buffer-substring (point-min) (point-max))))))
+
 (defun datomic-ion-status (&optional arn)
   "Get the status of the last Datomic Ion deploy.
 Optinally specify execution ARN."
   (interactive)
-  (let* ((default-directory (projectile-project-root))
+  (let* ((default-directory (project-root (project-current)))
          (name "ion deploy")
          (program "clojure")
-         (args `("-A:dev" "-m" "datomic.ion.dev"
+         (args `("-M:ion-dev"
                  ,(format "{:op :deploy-status, :execution-arn %s}"
                           (or arn datomic-ion-last-execution-arn))))
          (finish-func (lambda (proc)
@@ -172,11 +207,47 @@ Optinally specify execution ARN."
                                  (code-status (gethash ':code-deploy-status edn)))
                             (if (and (or (string= status "RUNNING") (string= code-status "RUNNING"))
                                      (or datomic-ion-auto-check-status
-                                         (yes-or-no-p "Deploy still running. Check status again? ")))
+                                         (yes-or-no-p "Deploy still running.  Check status again?")))
                                 (datomic-ion-status)
                               (message "Deploy status: %s - Code Deploy status: %s"
                                        status code-status)))))))
     (apply #'async-start-process name program finish-func args)))
+
+(defun datomic-system-list-instances (system)
+  "List EC2 instances for SYSTEM.
+
+Displays the EC2 Instances, with their instance-id and current status,
+that are utilized by the supplied system name."
+  (interactive (list (datomic--read-system)))
+  (let* ((cmd (concat datomic-cli-command " system list-instances " system))
+         (out (shell-command-to-string cmd))
+         (x (json-parse-string out)))
+    (with-temp-buffer
+      (insert "EC2 Instances for system '" system "'\n\n")
+      (mapc (lambda (groups)
+              (maphash (lambda (k v)
+                         (insert (format "%25s: %s\n" k v)))
+                       groups))
+            x)
+      (message (buffer-substring (point-min) (point-max))))))
+
+(defun datomic-system-describe-groups (system)
+  "List EC2 instances for SYSTEM.
+
+Displays information about the compute groups of the supplied
+Datomic Cloud system."
+  (interactive (list (datomic--read-system)))
+  (let* ((cmd (concat datomic-cli-command " system describe-groups " system))
+         (out (shell-command-to-string cmd))
+         (x (json-parse-string out)))
+    (with-temp-buffer
+      (insert "Information about the compute groups of system '" system "'\n\n")
+      (mapc (lambda (groups)
+              (maphash (lambda (k v)
+                         (insert (format "%25s: %s\n" k v)))
+                       groups))
+            x)
+      (message (buffer-substring (point-min) (point-max))))))
 
 (provide 'datomic)
 ;;; datomic.el ends here
