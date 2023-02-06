@@ -7,6 +7,7 @@
 ;; Keywords: clojure, datomic, ions, convenience, tools, processes
 ;; Version: 0.1
 ;; Package-Requires: ((emacs "28.1") (async "1.9.7") (parseedn "1.0.6") (project "0.9.5"))
+;; SPDX-License-Identifier: GPL-3.0-or-later
 
 ;; This file is NOT part of GNU Emacs.
 
