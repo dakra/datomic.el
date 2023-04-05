@@ -121,7 +121,9 @@ See https://docs.datomic.com/cloud/operation/cli-tools.html#client-acces"
 
 ;;;###autoload
 (defun datomic-ion-push ()
-  "Push the current project Datomic Ion."
+  "Push the current Datomic Ion project.
+Automatically deploy after a successful push if
+`datomic-ion-auto-deploy' is non-nil."
   (interactive)
   (let* ((default-directory (project-root (project-current)))
          (name "ion push")
@@ -131,8 +133,9 @@ See https://docs.datomic.com/cloud/operation/cli-tools.html#client-acces"
                         (save-excursion
                           (with-current-buffer
                               (process-buffer proc))
-                          (goto-char (point-min))
-                          (kill-line 3)
+                          (goto-char (point-max))
+                          (backward-sexp)
+                          (kill-region (point-min) (point))
                           (let* ((edn (car (parseedn-read)))
                                  (group (car (gethash :deploy-groups edn)))
                                  (rev (gethash :rev edn)))
@@ -143,6 +146,7 @@ See https://docs.datomic.com/cloud/operation/cli-tools.html#client-acces"
                                        (format "Deploy %s revision '%s' to group %s? "
                                                (project-name (project-current)) rev group)))
                               (datomic-ion-deploy group rev)))))))
+    (message "%s: %s %s" name program (string-join args " "))
     (apply #'async-start-process name program finish-func args)))
 
 
@@ -164,14 +168,44 @@ Optional use system GROUP and revision REV for deployment."
                           (save-excursion
                             (with-current-buffer
                                 (process-buffer proc))
-                            (goto-char (point-min))
+                            (goto-char (point-max))
+                            (backward-sexp)
+                            (kill-region (point-min) (point))
                             (let* ((edn (car (parseedn-read)))
                                    (arn (gethash ':execution-arn edn)))
                               (setq datomic-ion-last-execution-arn arn)
                               (when datomic-ion-auto-check-status
                                 (datomic-ion-status arn)))))))
+      (message "%s: %s %s" name program (string-join args " "))
       (apply #'async-start-process name program finish-func args))))
 
+(defun datomic-ion-status (&optional arn)
+  "Get the status of the last Datomic Ion deploy.
+Optionally specify execution ARN."
+  (interactive)
+  (let* ((default-directory (project-root (project-current)))
+         (name "ion deploy")
+         (program "clojure")
+         (args `("-M:ion-dev"
+                 ,(format "{:op :deploy-status, :execution-arn %s}"
+                          (or arn datomic-ion-last-execution-arn))))
+         (finish-func (lambda (proc)
+                        (save-excursion
+                          (with-current-buffer
+                              (process-buffer proc))
+                          (goto-char (point-max))
+                          (backward-sexp)
+                          (kill-region (point-min) (point))
+                          (let* ((edn (car (parseedn-read)))
+                                 (status (gethash ':deploy-status edn))
+                                 (code-status (gethash ':code-deploy-status edn)))
+                            (if (and (or (string= status "RUNNING") (string= code-status "RUNNING"))
+                                     (or datomic-ion-auto-check-status
+                                         (yes-or-no-p "Deploy still running.  Check status again?")))
+                                (datomic-ion-status)
+                              (message "Deploy status: %s - Code Deploy status: %s"
+                                       status code-status)))))))
+    (apply #'async-start-process name program finish-func args)))
 
 (defun datomic-list-systems ()
   "List Datomic cloud systems."
@@ -187,32 +221,6 @@ Optional use system GROUP and revision REV for deployment."
                        groups))
             x)
       (message (buffer-substring (point-min) (point-max))))))
-
-(defun datomic-ion-status (&optional arn)
-  "Get the status of the last Datomic Ion deploy.
-Optinally specify execution ARN."
-  (interactive)
-  (let* ((default-directory (project-root (project-current)))
-         (name "ion deploy")
-         (program "clojure")
-         (args `("-M:ion-dev"
-                 ,(format "{:op :deploy-status, :execution-arn %s}"
-                          (or arn datomic-ion-last-execution-arn))))
-         (finish-func (lambda (proc)
-                        (save-excursion
-                          (with-current-buffer
-                              (process-buffer proc))
-                          (goto-char (point-min))
-                          (let* ((edn (car (parseedn-read)))
-                                 (status (gethash ':deploy-status edn))
-                                 (code-status (gethash ':code-deploy-status edn)))
-                            (if (and (or (string= status "RUNNING") (string= code-status "RUNNING"))
-                                     (or datomic-ion-auto-check-status
-                                         (yes-or-no-p "Deploy still running.  Check status again?")))
-                                (datomic-ion-status)
-                              (message "Deploy status: %s - Code Deploy status: %s"
-                                       status code-status)))))))
-    (apply #'async-start-process name program finish-func args)))
 
 (defun datomic-system-list-instances (system)
   "List EC2 instances for SYSTEM.
