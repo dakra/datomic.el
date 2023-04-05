@@ -109,6 +109,18 @@ See https://docs.datomic.com/cloud/operation/cli-tools.html#client-acces"
         (read-string "System name: ")
       (completing-read "System name: " datomic-systems))))
 
+(defun datomic--yes-or-no-conflicts-p (conflicts)
+  "List dependency CONFLICTS and ask user if he really wants to continue."
+  (yes-or-no-p
+   (format (concat "You have dependency conflicts:\n"
+                   "%s\n"
+                   "Relly deploy? ")
+           (let (dep-list)
+             (maphash (lambda (k v)
+                        (add-to-list 'dep-list (format "%s%s" k (if v (concat ": " v) ""))))
+                      (gethash :deps conflicts))
+             (string-join dep-list ", ")))))
+
 ;; FIXME: -p aws-profile and -r aws-region --port port
 ;;;###autoload
 (defun datomic-access-client (system)
@@ -117,7 +129,6 @@ See https://docs.datomic.com/cloud/operation/cli-tools.html#client-acces"
   (let ((cmd (concat datomic-access-program " client " system))
         (name-fn (lambda (_mode) (concat "*" (file-name-base datomic-access-program) " client " system "*"))))
     (compilation-start cmd nil name-fn)))
-
 
 ;;;###autoload
 (defun datomic-ion-push ()
@@ -129,23 +140,26 @@ Automatically deploy after a successful push if
          (name "ion push")
          (program "clojure")
          (args '("-M:ion-dev" "{:op :push}"))
-         (finish-func (lambda (proc)
-                        (save-excursion
-                          (with-current-buffer
-                              (process-buffer proc))
-                          (goto-char (point-max))
-                          (backward-sexp)
-                          (kill-region (point-min) (point))
-                          (let* ((edn (car (parseedn-read)))
-                                 (group (car (gethash :deploy-groups edn)))
-                                 (rev (gethash :rev edn)))
-                            (setq datomic-ion-deploy-group group)
-                            (setq datomic-ion-last-rev rev)
-                            (when (or datomic-ion-auto-deploy
-                                      (yes-or-no-p
-                                       (format "Deploy %s revision '%s' to group %s? "
-                                               (project-name (project-current)) rev group)))
-                              (datomic-ion-deploy group rev)))))))
+         (finish-func
+          (lambda (proc)
+            (save-excursion
+              (with-current-buffer
+                  (process-buffer proc))
+              (goto-char (point-max))
+              (backward-sexp)
+              (kill-region (point-min) (point))
+              (let* ((edn (car (parseedn-read)))
+                     (group (car (gethash :deploy-groups edn)))
+                     (rev (gethash :rev edn))
+                     (conflicts (gethash :dependency-conflicts edn)))
+                (setq datomic-ion-deploy-group group)
+                (setq datomic-ion-last-rev rev)
+                (when (or datomic-ion-auto-deploy
+                          (yes-or-no-p
+                           (format "Deploy %s revision '%s' to group %s? "
+                                   (project-name (project-current)) rev group)))
+                  (unless (and conflicts (not (datomic--yes-or-no-conflicts-p conflicts)))
+                    (datomic-ion-deploy group rev))))))))
     (message "%s: %s %s" name program (string-join args " "))
     (apply #'async-start-process name program finish-func args)))
 
