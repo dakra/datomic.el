@@ -68,9 +68,8 @@
 (defcustom datomic-systems nil
   "List of datomic system names."
   :type '(repeat string)
-  :safe (lambda (value)
-          (and (listp value)
-               (cl-every 'stringp value))))
+  :safe (lambda (value) (and (listp value) (cl-every 'stringp value))))
+;;;###autoload(put 'datomic-systems 'safe-local-variable (lambda (value) (and (listp value) (cl-every 'stringp value))))
 
 (defcustom datomic-cli-command "clojure -Sdeps '{:deps {com.datomic/tools.ops {:mvn/version \"1.0.91\"}}}' -M -m datomic.tools.ops"
   "Command for the datomic CLI Tools.
@@ -160,7 +159,7 @@ Automatically deploy after a successful push if
                                    (project-name (project-current)) rev group)))
                   (unless (and conflicts (not (datomic--yes-or-no-conflicts-p conflicts)))
                     (datomic-ion-deploy group rev))))))))
-    (message "%s: %s %s" name program (string-join args " "))
+    (message "%s (%s): %s %s" name (project-name (project-current)) program (string-join args " "))
     (apply #'async-start-process name program finish-func args)))
 
 
@@ -221,6 +220,7 @@ Optionally specify execution ARN."
                                        status code-status)))))))
     (apply #'async-start-process name program finish-func args)))
 
+;;;###autoload
 (defun datomic-list-systems ()
   "List Datomic cloud systems."
   (interactive)
@@ -236,6 +236,7 @@ Optionally specify execution ARN."
             x)
       (message (buffer-substring (point-min) (point-max))))))
 
+;;;###autoload
 (defun datomic-system-list-instances (system)
   "List EC2 instances for SYSTEM.
 
@@ -254,6 +255,7 @@ that are utilized by the supplied system name."
             x)
       (message (buffer-substring (point-min) (point-max))))))
 
+;;;###autoload
 (defun datomic-system-describe-groups (system)
   "List EC2 instances for SYSTEM.
 
