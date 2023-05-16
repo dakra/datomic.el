@@ -49,6 +49,10 @@
   "Whether or not to automatically deploy after a Ion push."
   :type 'boolean)
 
+(defcustom datomic-confirm-deploy-with-conflicts t
+  "Query the user before an automatic deploy that has a dependency conflict."
+  :type 'boolean)
+
 (defcustom datomic-ion-auto-check-status t
   "Whether or not to automatically poll the status after a Ion deploy."
   :type 'boolean)
@@ -110,15 +114,17 @@ See https://docs.datomic.com/cloud/operation/cli-tools.html#client-acces"
 
 (defun datomic--yes-or-no-conflicts-p (conflicts)
   "List dependency CONFLICTS and ask user if he really wants to continue."
-  (yes-or-no-p
-   (format (concat "You have dependency conflicts:\n"
-                   "%s\n"
-                   "Relly deploy? ")
-           (let (dep-list)
-             (maphash (lambda (k v)
-                        (add-to-list 'dep-list (format "%s%s" k (if v (concat ": " v) ""))))
-                      (gethash :deps conflicts))
-             (string-join dep-list ", ")))))
+  (if datomic-confirm-deploy-with-conflicts
+      (yes-or-no-p
+       (format (concat "You have dependency conflicts:\n"
+                       "%s\n"
+                       "Really deploy? ")
+               (let (dep-list)
+                 (maphash (lambda (k v)
+                            (add-to-list 'dep-list (format "%s%s" k (if v (concat ": " v) ""))))
+                          (gethash :deps conflicts))
+                 (string-join dep-list ", "))))
+    t))
 
 ;; FIXME: -p aws-profile and -r aws-region --port port
 ;;;###autoload
